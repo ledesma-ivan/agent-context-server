@@ -19,6 +19,7 @@ import datasets  # noqa: F401
 
 import chromadb
 
+from vault_mcp import fts
 from vault_mcp.vault import VAULT_ROOT
 
 INDEX_PATH = Path(__file__).parent / "chroma_index"
@@ -117,18 +118,24 @@ def index_vault(dry_run: bool = True) -> str:
     stale_ids = [id_ for id_ in existing_hashes if id_ not in current]
 
     if dry_run:
-        return (
+        chroma_report = (
             f"[dry_run] {len(to_index_ids)} páginas nuevas/modificadas para embeber, "
             f"{len(stale_ids)} páginas obsoletas para borrar, "
             f"{len(current) - len(to_index_ids)} sin cambios (se saltean). "
             f"Ejemplo a embeber: {to_index_ids[:3]}"
         )
+        fts_report = fts.index_fts(dry_run=True)
+        return f"{chroma_report}\n{fts_report}"
 
     if stale_ids:
         collection.delete(ids=stale_ids)
 
     if not to_index_ids:
-        return f"Nada para embeber — las {len(current)} páginas ya estaban al día. {len(stale_ids)} obsoleta(s) borrada(s)."
+        fts_report = fts.index_fts(dry_run=dry_run)
+        return (
+            f"Nada para embeber — las {len(current)} páginas ya estaban al día. "
+            f"{len(stale_ids)} obsoleta(s) borrada(s).\n{fts_report}"
+        )
 
     # Upsert por tanda (no todo junto al final): si el proceso se corta a
     # mitad de camino (pasó una vez, corriendo por CPU casi 1h20), lo ya
@@ -147,11 +154,13 @@ def index_vault(dry_run: bool = True) -> str:
         done += len(batch_ids)
         print(f"[rag] upsert: {done}/{len(to_index_ids)}", flush=True)
 
-    return (
+    chroma_report = (
         f"Indexadas {len(to_index_ids)} páginas nuevas/modificadas, "
         f"{len(stale_ids)} obsoleta(s) borrada(s), "
         f"{len(current) - len(to_index_ids)} sin cambios (salteadas)."
     )
+    fts_report = fts.index_fts(dry_run=dry_run)
+    return f"{chroma_report}\n{fts_report}"
 
 
 def search_semantic(query: str, n_results: int = 5) -> str:
@@ -179,3 +188,20 @@ def search_semantic(query: str, n_results: int = 5) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def search_semantic_ranked(query: str, n_results: int = 5) -> list[tuple[str, float]]:
+    """Ranked vector search. Returns (page_id, score) sorted best-first,
+    score higher = better (Chroma's cosine distance is lower-is-better,
+    inverted here to 1 - distance so callers like _rrf_fuse can treat
+    every signal the same way). Returns [] if the index is empty."""
+    collection = get_collection()
+    if collection.count() == 0:
+        return []
+
+    query_embedding = _embed([query])[0]
+    results = collection.query(query_embeddings=[query_embedding], n_results=n_results)
+
+    ids = results["ids"][0]
+    distances = results["distances"][0]
+    return [(page_id, 1 - distance) for page_id, distance in zip(ids, distances)]
