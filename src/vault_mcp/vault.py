@@ -542,48 +542,6 @@ def resolve_pendiente(marker: str) -> str:
     return f'Resuelto y movido a log.md: "{_item_title(item)}"'
 
 
-def search_wiki(query: str, max_results: int = 20) -> str:
-    """Case-insensitive full-text search across every wiki/**/*.md file.
-
-    Returns matching lines grouped by file, capped at `max_results` total
-    matches so a broad query doesn't dump the whole vault back.
-    """
-    query_lower = query.lower()
-    per_file_matches: list[tuple[Path, list[tuple[int, str]]]] = []
-
-    for md_file in sorted((VAULT_ROOT / "wiki").rglob("*.md")):
-        try:
-            text = md_file.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        hits = [
-            (line_num, line.strip())
-            for line_num, line in enumerate(text.splitlines(), start=1)
-            if query_lower in line.lower()
-        ]
-        if hits:
-            per_file_matches.append((md_file.relative_to(VAULT_ROOT / "wiki"), hits))
-
-    if not per_file_matches:
-        return f"Sin resultados para '{query}'"
-
-    lines = [f"# Resultados de búsqueda: '{query}'", ""]
-    total = 0
-    for rel_path, hits in per_file_matches:
-        if total >= max_results:
-            lines.append(f"... ({max_results}+ resultados, truncado)")
-            break
-        lines.append(f"## {rel_path.as_posix()}")
-        for line_num, line_text in hits:
-            if total >= max_results:
-                break
-            lines.append(f"- L{line_num}: {line_text}")
-            total += 1
-        lines.append("")
-
-    return "\n".join(lines)
-
-
 def get_index() -> str:
     """Return the full contents of wiki/index.md as a string."""
     return (VAULT_ROOT / "wiki" / "index.md").read_text(encoding="utf-8")

@@ -3,7 +3,7 @@
 # vault_mcp (rag.py) must import before mcp.server.fastmcp: FastMCP's own
 # dependency chain (pydantic-core et al.) triggers the same native DLL
 # load-order conflict documented in rag.py if it loads first.
-from vault_mcp import rag, vault
+from vault_mcp import fts, rag, vault
 
 from mcp.server.fastmcp import FastMCP
 
@@ -94,8 +94,9 @@ def get_index() -> str:
 
 @mcp.tool()
 def search_wiki(query: str, max_results: int = 20) -> str:
-    """Full-text search (case-insensitive) across every wiki/**/*.md file."""
-    return vault.search_wiki(query, max_results=max_results)
+    """Full-text search across every wiki/**/*.md file, ranked by BM25
+    relevance (SQLite FTS5)."""
+    return fts.search_wiki(query, max_results=max_results)
 
 
 @mcp.tool()
