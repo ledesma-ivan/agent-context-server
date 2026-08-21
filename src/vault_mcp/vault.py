@@ -1439,6 +1439,28 @@ def get_related_pages(name: str, top_n: int = 8) -> str:
     return "\n".join(lines)
 
 
+def _rrf_fuse(
+    ranked_lists: list[list[tuple[str, float]]], k: int = 60
+) -> list[tuple[str, float]]:
+    """Reciprocal rank fusion: combine N ranked (page_id, score) lists into
+    one, using each item's *rank position* within its own list (not its raw
+    score, which isn't comparable across signals like BM25/cosine-similarity/
+    graph-weight). score(page) = sum(1 / (k + rank)) over every list it
+    appears in, rank is 0-indexed. Standard k=60 (Cormack et al. 2009).
+
+    A page_id repeated within a single input list is deduped to its last
+    occurrence's rank before scoring."""
+    scores: dict[str, float] = {}
+    for ranked_list in ranked_lists:
+        rank_by_page: dict[str, int] = {}
+        for rank, (page_id, _score) in enumerate(ranked_list):
+            rank_by_page[page_id] = rank
+        for page_id, rank in rank_by_page.items():
+            scores[page_id] = scores.get(page_id, 0.0) + 1.0 / (k + rank)
+
+    return sorted(scores.items(), key=lambda item: item[1], reverse=True)
+
+
 # hot.md's "Última sesión" grows the same way "Decisiones pendientes" used to
 # before archive_pendiente/PENDIENTES_WARN_CHARS: dense prose, one paragraph
 # per work session, never pruned. A manual step already existed for this
