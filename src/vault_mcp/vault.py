@@ -1823,3 +1823,62 @@ def register_ingested(path: str, veredicto: str, motivo: str, pagina: str | None
     _save_manifest(manifest)
 
     return f"Registrado: `{file_path.name}` → {veredicto} ({motivo})"
+
+
+_RELATED_PAGE_LINE = re.compile(r"\[\[([^\]]+)\]\]\s*\(([0-9.]+)\)")
+
+
+def _parse_related_pages_output(text: str) -> list[tuple[str, float]]:
+    """Extract (page_id, score) pairs from get_related_pages' formatted
+    output (lines like '- [[page]] (7.5) — breakdown'). Returns [] for
+    its warning-string case (nonexistent page) or its no-signal case
+    ('Ninguna señal de relación encontrada') — neither contains a
+    [[wikilink]](score) pair, so search_hybrid treats both as "no graph
+    signal from this anchor", not an error."""
+    return [(name, float(score)) for name, score in _RELATED_PAGE_LINE.findall(text)]
+
+
+def search_hybrid(query: str, n_results: int = 5) -> str:
+    """Fuse BM25 (fts.search_wiki_ranked), vector search
+    (rag.search_semantic_ranked), and graph relatedness (get_related_pages)
+    with reciprocal rank fusion, per docs/superpowers/specs/
+    2026-08-21-search-hybrid-rrf-design.md.
+
+    Lazy-imports rag/fts (same pattern as the existing lazy import at the
+    top of run_lint's index-drift check) to avoid the native DLL
+    load-order conflict documented in rag.py if chromadb-adjacent imports
+    happened at vault.py's module level.
+    """
+    from vault_mcp import fts, rag
+
+    bm25_ranked = fts.search_wiki_ranked(query, max_results=20)
+    vector_ranked = rag.search_semantic_ranked(query, n_results=20)
+
+    stage1 = _rrf_fuse([bm25_ranked, vector_ranked], k=60)
+    anchors = [page_id for page_id, _score in stage1[:5]]
+
+    graph_ranked: list[tuple[str, float]] = []
+    for anchor in anchors:
+        related_text = get_related_pages(anchor, top_n=5)
+        graph_ranked.extend(_parse_related_pages_output(related_text))
+
+    final = _rrf_fuse([stage1, graph_ranked], k=60)[:n_results]
+
+    if not final:
+        return f"Sin resultados para '{query}'"
+
+    bm25_pages = {p for p, _ in bm25_ranked}
+    vector_pages = {p for p, _ in vector_ranked}
+    graph_pages = {p for p, _ in graph_ranked}
+
+    lines = [f"# Resultados híbridos (BM25+vectorial+grafo): '{query}'", ""]
+    for page_id, score in final:
+        signals = []
+        if page_id in bm25_pages:
+            signals.append("BM25")
+        if page_id in vector_pages:
+            signals.append("vectorial")
+        if page_id in graph_pages:
+            signals.append("grafo")
+        lines.append(f"## {page_id} (score: {score:.4f}, señales: {', '.join(signals) or '?'})")
+    return "\n".join(lines)

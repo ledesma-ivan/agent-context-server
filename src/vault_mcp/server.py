@@ -242,6 +242,16 @@ def search_semantic(query: str, n_results: int = 5) -> str:
     return rag.search_semantic(query, n_results=n_results)
 
 
+@mcp.tool()
+def search_hybrid(query: str, n_results: int = 5) -> str:
+    """Fused search: BM25 (full-text) + vector (semantic) + graph
+    (relatedness via wikilinks), combined with reciprocal rank fusion.
+    Use this instead of calling search_wiki/search_semantic/
+    get_related_pages separately when you want one ranked answer that
+    accounts for all three signals."""
+    return vault.search_hybrid(query, n_results=n_results)
+
+
 def main() -> None:
     mcp.run()
 
