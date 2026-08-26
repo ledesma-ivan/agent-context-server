@@ -36,6 +36,7 @@ MESES_ES = {
     12: "Diciembre",
 }
 TAREAS_SECTION_RE = re.compile(r"## ✅ Tareas\n(.*?)\n---", re.DOTALL)
+CAPTURA_SECTION_RE = re.compile(r"## 📥 Capture bruta\n(.*?)\n## ", re.DOTALL)
 
 # Servable budget for get_pendientes(). Kept below run_lint's 40k warn
 # threshold and well under Hermes' ~8195-token real input ceiling (~32-33k
@@ -61,6 +62,42 @@ PENDIENTE_VENCIDO_DIAS = 14
 # load-bearing, and truncating them top-down was the exact failure mode
 # that motivated get_pendientes() as a separate tool in the first place.
 HOT_SERVE_BUDGET_CHARS = 100_000
+
+
+class ConcurrentWriteError(Exception):
+    """Raised when a target file changed between read and write."""
+
+
+def _atomic_write_if_unchanged(path: Path, expected_text: str, new_text: str) -> None:
+    """Write new_text to path, but only if its content still matches
+    expected_text (the text read at the start of the calling function's
+    read-modify-write operation).
+
+    Guards the read-modify-write race on hot.md, the most-written file in
+    the vault (interactive Claude Code sessions, Hermes' daily heartbeat,
+    and the vault-eventos-proximos-check cron all touch it) -- without this,
+    two writers reading before either writes silently lose one of the two
+    changes. Raises ConcurrentWriteError instead of overwriting; callers
+    catch it and return a conflict message so the operation can be retried
+    with fresh state, rather than eating the other writer's change. Minimal
+    version of the transaction-with-hash-precondition pattern documented in
+    wiki/fuentes/claude-obsidian-agricidaniel-comparacion-vault-mcp.md
+    (26/8/2026) -- no locking, no journaling, no cross-file bundles, just the
+    one check that closes the actual data-loss risk.
+
+    Write itself is atomic (temp file + os.replace) so a crash mid-write
+    never leaves a half-written file -- os.replace is atomic on both POSIX
+    and Windows.
+    """
+    current_text = path.read_text(encoding="utf-8") if path.exists() else ""
+    if current_text != expected_text:
+        raise ConcurrentWriteError(
+            f"{path.name} cambió desde que se leyó (probable escritura "
+            "concurrente) -- no se sobreescribió. Reintentá la operación."
+        )
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(new_text, encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def get_hot() -> str:
@@ -319,7 +356,10 @@ def archive_pendiente(marker: str) -> str:
     new_section = section.replace(item, "", 1)
     new_section = re.sub(r"\n{3,}", "\n\n", new_section).rstrip() + "\n"
     new_hot_text = hot_text[:sec_start] + new_section + hot_text[sec_end:]
-    hot_path.write_text(new_hot_text, encoding="utf-8")
+    try:
+        _atomic_write_if_unchanged(hot_path, hot_text, new_hot_text)
+    except ConcurrentWriteError as exc:
+        return str(exc)
 
     if not ARCHIVE_PATH.exists():
         ARCHIVE_PATH.write_text(
@@ -427,7 +467,10 @@ def add_pendiente(texto: str, force: bool = False) -> str:
     header, sep, body = section.partition("\n")
     new_section = header + sep + item_line + body
     new_hot_text = hot_text[:sec_start] + new_section + hot_text[sec_end:]
-    hot_path.write_text(new_hot_text, encoding="utf-8")
+    try:
+        _atomic_write_if_unchanged(hot_path, hot_text, new_hot_text)
+    except ConcurrentWriteError as exc:
+        return str(exc)
 
     return f'Agregado a hot.md → Decisiones pendientes: "{_item_title(item_line)}"'
 
@@ -478,6 +521,49 @@ def add_tarea_diaria(texto: str) -> str:
     return f'Agregado a la nota de hoy → ✅ Tareas: "{texto[:80]}"'
 
 
+def add_captura_diaria(texto: str) -> str:
+    """Add a raw, uncategorized item to today's daily note, section
+    '## 📥 Capture bruta' -- captura de baja fricción (22/8/2026, motivada
+    por el patrón "organs log" de otros second brains: una frase suelta sin
+    tener que decidir categoría/sección al momento de escribirla). Pensada
+    como destino natural de mensajes de voz/texto sueltos por Telegram vía
+    Hermes -- Ivan tira la idea, el agente la cuelga acá, y el filtro/
+    categorización real pasa después en INGERIR (paso 4 de la regla de
+    ítems enumerados en CLAUDE.md), no en el momento de captura.
+
+    A diferencia de add_tarea_diaria (prepende, lista de tareas más
+    reciente arriba), esto APPENDEA al final -- Capture bruta es un log
+    cronológico de ideas sueltas, no una cola de tareas a priorizar.
+
+    Refuses to act if today's daily note doesn't exist yet, or if the note
+    has no '## 📥 Capture bruta' section in the expected shape.
+    """
+    texto = texto.strip()
+    if not texto:
+        return "El texto de la captura no puede estar vacío."
+
+    note_path = _today_note_path()
+    if not note_path.exists():
+        return f"No existe la nota de hoy todavía: {note_path}"
+
+    note_text = note_path.read_text(encoding="utf-8")
+    section_match = CAPTURA_SECTION_RE.search(note_text)
+    if not section_match:
+        return "No se encontró la sección '## 📥 Capture bruta' en la nota de hoy."
+
+    item_line = f"- {texto}"
+    body = section_match.group(1).rstrip("\n")
+    new_body = f"{body}\n{item_line}" if body.strip() else item_line
+    new_note_text = (
+        note_text[: section_match.start(1)]
+        + new_body
+        + note_text[section_match.end(1) :]
+    )
+    note_path.write_text(new_note_text, encoding="utf-8")
+
+    return f'Agregado a la nota de hoy → 📥 Capture bruta: "{texto[:80]}"'
+
+
 def resolve_pendiente(marker: str) -> str:
     """Mark one 'Decisiones pendientes' item as resolved and move it into
     wiki/log.md, out of hot.md.
@@ -516,12 +602,16 @@ def resolve_pendiente(marker: str) -> str:
     new_section = section.replace(item, "", 1)
     new_section = re.sub(r"\n{3,}", "\n\n", new_section).rstrip() + "\n"
     new_hot_text = hot_text[:sec_start] + new_section + hot_text[sec_end:]
-    hot_path.write_text(new_hot_text, encoding="utf-8")
+    try:
+        _atomic_write_if_unchanged(hot_path, hot_text, new_hot_text)
+    except ConcurrentWriteError as exc:
+        return str(exc)
 
     resolved_item = re.sub(r"^- \[ \]", "- [x]", item.strip(), count=1)
 
     log_path = VAULT_ROOT / "wiki" / "log.md"
-    log_text = log_path.read_text(encoding="utf-8") if log_path.exists() else "# Wiki — Log de Actividad\n\n"
+    original_log_text = log_path.read_text(encoding="utf-8") if log_path.exists() else "# Wiki — Log de Actividad\n\n"
+    log_text = original_log_text
     today_header = f"## {date.today().isoformat()} (pendientes resueltos vía resolve_pendiente)"
     entry_line = resolved_item
 
@@ -537,7 +627,14 @@ def resolve_pendiente(marker: str) -> str:
         block = f"{today_header}\n\n{entry_line}\n\n"
         log_text = log_text[:insert_at] + block + log_text[insert_at:]
 
-    log_path.write_text(log_text, encoding="utf-8")
+    try:
+        _atomic_write_if_unchanged(log_path, original_log_text, log_text)
+    except ConcurrentWriteError as exc:
+        return (
+            f'hot.md ya se actualizó (ítem removido) pero log.md no: {exc} '
+            "El pendiente quedó fuera de 'Decisiones pendientes' sin registrar en log.md -- "
+            "revisar a mano."
+        )
 
     return f'Resuelto y movido a log.md: "{_item_title(item)}"'
 
@@ -839,6 +936,45 @@ def check_calendar_overlaps(target_date: str | None = None, dias: int = 14) -> s
 
     lines = [f"# Solapamientos de calendario ({len(overlaps)})", ""]
     lines.extend(f"- {o}" for o in overlaps)
+    return "\n".join(lines)
+
+
+def check_inbox_age(max_dias: int = 20) -> str:
+    """Cap 'Antigüedad máxima de inbox/captura' de hot.md (tope 20 días,
+    bajado de 7 a 14 y subido a 20 a pedido de Ivan 22/8/2026) -- hasta ahora ese cap estaba
+    declarado sin ningún mecanismo de medición. Reporta archivos de
+    `_Inbox/` (recursivo, subcarpetas de Libros/Papers/Charlas/Cursos/
+    Certificaciones incluidas) más viejos que `max_dias`, por mtime.
+
+    `_Inbox/descartados/` queda afuera a propósito: son archivos que
+    SÍNTESIS MENSUAL ya movió ahí después de 30 días sin reconsiderar
+    (ver "Descartado no es borrado" en CLAUDE.md) -- volver a listarlos acá
+    sería ruido, ese housekeeping ya está resuelto por otro mecanismo.
+    """
+    inbox_root = VAULT_ROOT / "_Inbox"
+    if not inbox_root.exists():
+        return "`_Inbox/` no existe."
+
+    cutoff = datetime.now().timestamp() - max_dias * 86400
+    stale: list[tuple[float, Path]] = []
+    for file_path in inbox_root.rglob("*"):
+        if not file_path.is_file():
+            continue
+        if inbox_root / "descartados" in file_path.parents:
+            continue
+        mtime = file_path.stat().st_mtime
+        if mtime < cutoff:
+            stale.append((mtime, file_path))
+
+    if not stale:
+        return f"Sin archivos en `_Inbox/` más viejos que {max_dias} días."
+
+    stale.sort(key=lambda pair: pair[0])
+    lines = [f"# Archivos de _Inbox/ más viejos que {max_dias} días ({len(stale)})", ""]
+    for mtime, file_path in stale:
+        edad_dias = int((datetime.now().timestamp() - mtime) / 86400)
+        rel = file_path.relative_to(inbox_root)
+        lines.append(f"- `{rel}` — {edad_dias} días sin procesar")
     return "\n".join(lines)
 
 
@@ -1591,7 +1727,10 @@ def prune_hot(dry_run: bool = True) -> str:
     new_body = "\n\n".join(new_entries)
     new_section = header + "\n\n" + new_body + "\n"
     new_hot_text = hot_text[:sec_start] + new_section + hot_text[sec_end:]
-    hot_path.write_text(new_hot_text, encoding="utf-8")
+    try:
+        _atomic_write_if_unchanged(hot_path, hot_text, new_hot_text)
+    except ConcurrentWriteError as exc:
+        return report + f"\n\nNo se escribió: {exc}"
     return report + "\n\nEscrito en wiki/hot.md."
 
 
@@ -1737,7 +1876,10 @@ def prune_brechas(dry_run: bool = True) -> str:
     new_body = "\n".join(new_entries)
     new_section = header + "\n\n" + new_body + "\n"
     new_hot_text = hot_text[:sec_start] + new_section + hot_text[sec_end:]
-    hot_path.write_text(new_hot_text, encoding="utf-8")
+    try:
+        _atomic_write_if_unchanged(hot_path, hot_text, new_hot_text)
+    except ConcurrentWriteError as exc:
+        return report + f"\n\nNo se escribió: {exc}"
     return report + "\n\nEscrito en wiki/hot.md."
 
 
