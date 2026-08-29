@@ -1,8 +1,0 @@
-.venv/
-__pycache__/
-*.pyc
-src/agent_runtime/heartbeat.log
-src/vault_mcp/chroma_index/
-src/vault_mcp/ingested_manifest.json
-src/vault_mcp/fts_index.db
-docs/superpowers/
