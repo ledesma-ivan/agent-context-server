@@ -77,6 +77,20 @@ def add_tarea_diaria(texto: str) -> str:
 
 
 @mcp.tool()
+def add_captura_diaria(texto: str) -> str:
+    """Append a raw, uncategorized idea/thought to today's daily note
+    ('## 📥 Capture bruta') -- baja fricción de captura (22/8/2026): no
+    hace falta decidir sección/categoría al momento de escribir, eso lo
+    resuelve INGERIR después. Destino natural para mensajes de voz/texto
+    sueltos por Telegram -- si el usuario tira una idea suelta sin pedir
+    nada puntual, colgarla acá en vez de perderla. A diferencia de
+    add_tarea_diaria, APPENDEA al final (log cronológico, no cola de
+    tareas). Fails if today's note doesn't exist yet or has no
+    '## 📥 Capture bruta' section."""
+    return vault.add_captura_diaria(texto)
+
+
+@mcp.tool()
 def resolve_pendiente(marker: str) -> str:
     """Mark one 'Decisiones pendientes' item as resolved and move it to
     wiki/log.md — counterpart to archive_pendiente (which is for items that
@@ -158,6 +172,15 @@ def check_calendar_overlaps(target_date: str | None = None, dias: int = 14) -> s
     entre eventos recurrentes/únicos de Calendario/, en vez de descubrirlos
     uno a la vez cuando ya chocaron. Solo reporta, no modifica nada."""
     return vault.check_calendar_overlaps(target_date=target_date, dias=dias)
+
+
+@mcp.tool()
+def check_inbox_age(max_dias: int = 20) -> str:
+    """Cap de hot.md 'Antigüedad máxima de inbox/captura' (20 días) --
+    reporta archivos de _Inbox/ más viejos que max_dias por mtime, para
+    dejar de tener ese cap declarado sin ningún mecanismo de medición
+    real. Solo reporta, no modifica ni mueve nada."""
+    return vault.check_inbox_age(max_dias=max_dias)
 
 
 @mcp.tool()

@@ -13,11 +13,16 @@ from pathlib import Path
 
 import frontmatter
 
-# Path to the vault on disk. Reads VAULT_MCP_ROOT if set (portable across
-# machines/vaults — needed once this repo is shared publicly, since a
-# hardcoded personal path doesn't make sense for anyone else running it);
-# falls back to Ivan's own vault so nothing breaks locally without a .env.
-VAULT_ROOT = Path(os.environ.get("VAULT_MCP_ROOT", r"C:\Users\Ivan\Desktop\Diario"))
+# Path to the vault on disk. Must be set via VAULT_MCP_ROOT — no default,
+# so this never silently points at a specific person's vault.
+_env_root = os.environ.get("VAULT_MCP_ROOT")
+if not _env_root:
+    raise RuntimeError(
+        "VAULT_MCP_ROOT is not set. Point it at the root of an Obsidian "
+        "vault with the expected structure (wiki/{fuentes,entidades,"
+        "conceptos,sintesis}/, YAML frontmatter, [[wikilinks]])."
+    )
+VAULT_ROOT = Path(_env_root)
 
 ARCHIVE_PATH = VAULT_ROOT / "wiki" / "pendientes-archivo.md"
 
@@ -527,7 +532,7 @@ def add_captura_diaria(texto: str) -> str:
     por el patrón "organs log" de otros second brains: una frase suelta sin
     tener que decidir categoría/sección al momento de escribirla). Pensada
     como destino natural de mensajes de voz/texto sueltos por Telegram vía
-    Hermes -- Ivan tira la idea, el agente la cuelga acá, y el filtro/
+    Hermes -- el usuario tira la idea, el agente la cuelga acá, y el filtro/
     categorización real pasa después en INGERIR (paso 4 de la regla de
     ítems enumerados en CLAUDE.md), no en el momento de captura.
 
@@ -677,7 +682,7 @@ REQUIRED_FRONTMATTER_FIELDS = {
 }
 
 # Patrón de comportamiento encontrado 8/7/2026 (análisis de log): contenido
-# ajeno se cita repetidamente como propio de Ivan sin marcarlo, y el error
+# ajeno se cita repetidamente como propio del usuario sin marcarlo, y el error
 # rebota entre sesiones con veredictos opuestos (caso real: "+25% OOS" de
 # btc_ema_pullback, corregido el 4/7, revertido el 5/7). Campo obligatorio
 # en vez de confiar en que se note a ojo.
@@ -941,7 +946,7 @@ def check_calendar_overlaps(target_date: str | None = None, dias: int = 14) -> s
 
 def check_inbox_age(max_dias: int = 20) -> str:
     """Cap 'Antigüedad máxima de inbox/captura' de hot.md (tope 20 días,
-    bajado de 7 a 14 y subido a 20 a pedido de Ivan 22/8/2026) -- hasta ahora ese cap estaba
+    bajado de 7 a 14 y subido a 20 a pedido del usuario) -- hasta ahora ese cap estaba
     declarado sin ningún mecanismo de medición. Reporta archivos de
     `_Inbox/` (recursivo, subcarpetas de Libros/Papers/Charlas/Cursos/
     Certificaciones incluidas) más viejos que `max_dias`, por mtime.
@@ -1738,7 +1743,7 @@ def prune_hot(dry_run: bool = True) -> str:
 # way "Última sesión" did before prune_hot: dense forensic bullets about
 # fixes to code outside the vault (modo_bienestar.py, Cold Turkey, etc.),
 # never pruned once the fix lands. Unlike "Última sesión", these bullets
-# don't reliably say "log.md" — Ivan's own convention here is
+# don't reliably say "log.md" — the vault owner's own convention here is
 # "**cerrado (DD/MM/YYYY)**" / "**resuelto (DD/MM/YYYY)**" without a pointer.
 # So recoverability can't be trusted from a text marker alone: this checks
 # log.md for an actual dated section header before collapsing anything.

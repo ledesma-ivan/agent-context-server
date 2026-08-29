@@ -1,8 +1,8 @@
-# vault-mcp
+# agent-context-server
 
-Servidor MCP que expone el vault de Obsidian de Ivan (`C:\Users\Ivan\Desktop\Diario`, wiki en markdown con frontmatter YAML + `[[wikilinks]]`) como tools para un agente LLM (Claude Code). Reemplaza la carga manual de contexto (`Read` archivo por archivo) que Claude hacía a mano cada sesión.
+Servidor MCP que expone un vault de Obsidian (wiki en markdown con frontmatter YAML + `[[wikilinks]]`) como tools para un agente LLM (Claude Code). Reemplaza la carga manual de contexto (`Read` archivo por archivo) que un agente haría a mano cada sesión.
 
-Es la capa 1 del plan de "second brain autónomo" — ver `wiki/hot.md` en el vault para el resto del stack. Capas 1 (MCP server) y 2 (RAG, `search_semantic`/`index_vault`) cerradas. El heartbeat autónomo (capa 3, antes pensado como un runtime propio en este repo) terminó resuelto por otra vía: crons de [Hermes Agent](https://github.com/NousResearch/hermes-agent) que llaman a estas mismas tools por MCP — no hay `agent_runtime/` en este repo.
+Es la capa 1 de un plan de "second brain autónomo". Capas 1 (MCP server) y 2 (RAG, `search_semantic`/`index_vault`) cerradas. El heartbeat autónomo (capa 3, antes pensado como un runtime propio en este repo) terminó resuelto por otra vía: crons de [Hermes Agent](https://github.com/NousResearch/hermes-agent) que llaman a estas mismas tools por MCP — no hay `agent_runtime/` en este repo.
 
 ## Setup
 
@@ -28,7 +28,7 @@ Requiere reiniciar Claude Code para que la sesión reconozca el servidor nuevo.
 
 Separados a propósito: el protocolo MCP puede cambiar independientemente de la lógica del vault.
 
-`VAULT_ROOT` se lee de la variable de entorno `VAULT_MCP_ROOT` (con fallback al vault de Ivan si no está seteada) — configurable desde el 14/7/2026 para poder correr este servidor contra cualquier vault de Obsidian con la misma estructura (`wiki/{fuentes,entidades,conceptos,sintesis}/`, frontmatter YAML, `[[wikilinks]]`), no solo el de Ivan.
+`VAULT_ROOT` se lee de la variable de entorno `VAULT_MCP_ROOT` (obligatoria, sin fallback — el servidor no arranca sin ella) para poder correr contra cualquier vault de Obsidian con la misma estructura (`wiki/{fuentes,entidades,conceptos,sintesis}/`, frontmatter YAML, `[[wikilinks]]`).
 
 ```bash
 export VAULT_MCP_ROOT="/path/to/tu/vault"

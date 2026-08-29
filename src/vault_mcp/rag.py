@@ -30,7 +30,7 @@ _model = None
 
 def _get_model():
     """Lazily load BGE-M3 (first call only — the model stays resident for
-    the life of the MCP server process, ~2GB VRAM on Ivan's RTX 3060)."""
+    the life of the MCP server process, ~2GB VRAM on a consumer GPU)."""
     global _model
     if _model is None:
         from FlagEmbedding import BGEM3FlagModel
