@@ -83,14 +83,11 @@ export VAULT_MCP_ROOT="/path/to/tu/vault"
 | `get_local_events(target_date=None, dias=1)` | Eventos de `Calendario/` (plugin Full Calendar Remastered de Obsidian) para una fecha o rango — soporta eventos únicos y recurrentes (por día de semana o Nth-día-del-mes) |
 | `check_calendar_overlaps(target_date=None, dias=14)` | Chequea solapamientos en todo un rango de una sola pasada, en vez de descubrirlos uno a uno sesión tras sesión |
 
-## Gotcha conocido: frontmatter con wikilinks
+## Known gotchas
 
-Un valor de frontmatter como `fuente_original: [[a]] + [[b]]` rompe el parser YAML — el `[` inicial de `[[` se interpreta como el comienzo de una lista de flujo. `run_lint()` encontró 5 páginas reales del vault con este problema (`fuente_original` sin comillas). Solución: entrecomillar el valor (`fuente_original: "[[a]] + [[b]]"`). `_iter_wiki_pages()` es tolerante a estos errores por archivo — no crashea el resto de las tools, pero esas páginas quedan invisibles para `build_index`/`run_lint` hasta que se corrijan.
-
-## Gotcha conocido: orden de imports y crashes nativos en Windows
-
-`rag.py` y `server.py` importan `torch`/`pandas`/`sklearn`/`transformers`/`datasets` en un orden específico, **antes** de `chromadb` (en `rag.py`) y **antes** de `mcp.server.fastmcp` (en `server.py`). Si algo carga primero (`chromadb`, `FastMCP`/`pydantic-core`, o cualquier import nuevo que se agregue cerca del top de estos archivos), el proceso crashea con `Windows fatal exception: access violation` (segfault) al importar `FlagEmbedding` — es un conflicto de orden de carga de DLLs nativas de Windows entre `pyarrow.lib` y las demás libs, no un problema de versiones. Cualquier import nuevo cerca del top de `rag.py`/`server.py` debe respetar este orden o volver a romperlo. Ver también: `torch` debe ser la build CUDA (`+cu124` o superior) y `>=2.6` (requisito de `transformers` por CVE-2025-32434) — instalar con `pip install torch --index-url https://download.pytorch.org/whl/cu124`, y si falla la resolución de `typing-extensions` por un bug de metadata del índice de PyTorch, usar `--no-deps` en el install de `torch` y actualizar `typing-extensions` aparte desde PyPI normal.
+- **YAML frontmatter + wikilinks**: `fuente_original: [[a]] + [[b]]` rompe el parser (el `[` inicial se lee como lista de flujo) — quotear el valor. Tolerado por archivo: no crashea el resto de las tools, pero esa página queda invisible para `build_index`/`run_lint` hasta corregirse.
+- **Windows: orden de imports.** `torch`/`pandas`/`transformers` deben importarse antes que `chromadb`/`FastMCP` en `rag.py`/`server.py` — otro orden produce `access violation` al cargar `FlagEmbedding` (conflicto de carga de DLLs nativas entre `pyarrow.lib` y el resto, no un problema de versiones). `torch` debe ser build CUDA `>=2.6` (`+cu124`, requisito de `transformers` por CVE-2025-32434).
 
 ## Testing
 
-No hay suite de tests todavía. Se validó manualmente contra el vault real en modo lectura (sin `dry_run=False` en `build_index`, sin `create_page` contra el vault real — esa se probó en un directorio temporal aislado).
+33 tests (`unittest`, `tests/`) sobre la lógica de `vault.py`/`fts.py`/`rag.py` en directorios temporales aislados. Sin suite de integración contra el vault real todavía.
